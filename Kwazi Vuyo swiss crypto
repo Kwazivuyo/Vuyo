@@ -1,0 +1,293 @@
+"""
+Swiss Crypto Tool
+
+Author: Kwazi Vuyo
+Emails: vuyom@takenoteit.co.za, kwazivuyo88@gmail.com
+
+A Python GUI tool supporting hashing, encryption, and secure email sending.
+"""
+
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from Crypto.Cipher import ARC4, DES, AES
+import tkinter as tk
+from tkinter import messagebox
+import base64
+import hashlib
+import os
+import binascii
+
+# ====== Helper functions for padding/unpadding ======
+def pad(data, block_size):
+    pad_len = block_size - len(data) % block_size
+    return data + bytes([pad_len] * pad_len)
+
+def unpad(padded):
+    pad_len = padded[-1]
+    return padded[:-pad_len]
+
+# ====== Hash Functions ======
+def hash_text(algorithm, data):
+    h = getattr(hashlib, algorithm)()
+    h.update(data.encode())
+    return h.hexdigest()
+
+# ====== DES Functions ======
+def des_encrypt(data, key):
+    des = DES.new(key, DES.MODE_ECB)
+    padded = pad(data.encode(), 8)
+    cipher_text = des.encrypt(padded)
+    return binascii.hexlify(cipher_text).decode()
+
+def des_decrypt(cipher_hex, key):
+    des = DES.new(key, DES.MODE_ECB)
+    cipher_bytes = binascii.unhexlify(cipher_hex)
+    decrypted = des.decrypt(cipher_bytes)
+    return unpad(decrypted).decode(errors="ignore")
+
+# ====== AES Functions ======
+def aes_encrypt(data, key):
+    cipher = AES.new(key, AES.MODE_ECB)
+    padded = pad(data.encode(), 32)
+    encrypted = cipher.encrypt(padded)
+    return binascii.hexlify(encrypted).decode()
+
+def aes_decrypt(cipher_hex, key):
+    cipher = AES.new(key, AES.MODE_ECB)
+    cipher_bytes = binascii.unhexlify(cipher_hex)
+    decrypted = cipher.decrypt(cipher_bytes)
+    return unpad(decrypted).decode(errors="ignore")
+
+# ====== ARC4 Functions ======
+def arc4_encrypt(data, key):
+    cipher = ARC4.new(key)
+    encrypted = cipher.encrypt(data.encode())
+    return binascii.hexlify(encrypted).decode()
+
+def arc4_decrypt(cipher_hex, key):
+    cipher = ARC4.new(key)
+    cipher_bytes = binascii.unhexlify(cipher_hex)
+    decrypted = cipher.decrypt(cipher_bytes)
+    return decrypted.decode(errors="ignore")
+
+# ====== Email Sending (AES-encrypted body) ======
+def send_secure_email(s_email, s_pass, r_email, message):
+    try:
+        # AES Key for this message
+        key = os.urandom(32)
+        # Encrypt message
+        cipher = AES.new(key, AES.MODE_ECB)
+        padded = pad(message.encode(), 32)
+        encrypted_body = binascii.hexlify(cipher.encrypt(padded)).decode()
+
+        msg = MIMEMultipart()
+        msg['From'] = s_email
+        msg['To'] = r_email
+        msg['Subject'] = "Encrypted Email from Swiss Crypto Tool"
+        msg.attach(MIMEText(encrypted_body + "\n\n[Key (hex): {}]".format(binascii.hexlify(key).decode())))
+
+        # Gmail SMTP (requires app password if 2FA enabled)
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(s_email, s_pass)
+        server.sendmail(s_email, r_email, msg.as_string())
+        server.quit()
+        return True, "Email sent successfully!\n\nAES Key (hex): {}\nShare this key securely with the recipient.".format(binascii.hexlify(key).decode())
+    except Exception as e:
+        return False, "Failed to send email: " + str(e)
+
+# ====== GUI ======
+class SwissCryptoTool:
+    def __init__(self, root):
+        self.root = root
+        root.title("Swiss Crypto Tool")
+
+        self.tab_control = tk.ttk.Notebook(root)
+
+        # Tabs
+        self.hash_tab = tk.Frame(self.tab_control)
+        self.encrypt_tab = tk.Frame(self.tab_control)
+        self.decrypt_tab = tk.Frame(self.tab_control)
+        self.email_tab = tk.Frame(self.tab_control)
+
+        self.tab_control.add(self.hash_tab, text='Hash')
+        self.tab_control.add(self.encrypt_tab, text='Encrypt')
+        self.tab_control.add(self.decrypt_tab, text='Decrypt')
+        self.tab_control.add(self.email_tab, text='Secure Email')
+        self.tab_control.pack(expand=1, fill="both")
+
+        self.build_hash_tab()
+        self.build_encrypt_tab()
+        self.build_decrypt_tab()
+        self.build_email_tab()
+
+    def build_hash_tab(self):
+        tk.Label(self.hash_tab, text="Enter Text:").pack()
+        self.hash_entry = tk.Entry(self.hash_tab, width=50)
+        self.hash_entry.pack()
+
+        self.hash_result = tk.Label(self.hash_tab, text="", fg="blue")
+        self.hash_result.pack()
+
+        btn_frame = tk.Frame(self.hash_tab)
+        btn_frame.pack()
+        for algo in ["md5", "sha1", "sha224", "sha256", "sha384", "sha512"]:
+            tk.Button(btn_frame, text=algo.upper(),
+                      command=lambda a=algo: self.do_hash(a)).pack(side=tk.LEFT, padx=2)
+
+    def build_encrypt_tab(self):
+        tk.Label(self.encrypt_tab, text="Enter Plaintext:").pack()
+        self.enc_plain = tk.Entry(self.encrypt_tab, width=50)
+        self.enc_plain.pack()
+        tk.Label(self.encrypt_tab, text="Key (hex, 8 bytes for DES, 16/24/32 for AES, any for ARC4):").pack()
+        self.enc_key = tk.Entry(self.encrypt_tab, width=50)
+        self.enc_key.pack()
+
+        self.enc_result = tk.Label(self.encrypt_tab, text="", fg="blue")
+        self.enc_result.pack()
+
+        btn_frame = tk.Frame(self.encrypt_tab)
+        btn_frame.pack()
+        tk.Button(btn_frame, text="DES Encrypt", command=self.do_des_encrypt).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="AES Encrypt", command=self.do_aes_encrypt).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="ARC4 Encrypt", command=self.do_arc4_encrypt).pack(side=tk.LEFT, padx=2)
+
+    def build_decrypt_tab(self):
+        tk.Label(self.decrypt_tab, text="Enter Ciphertext (hex):").pack()
+        self.dec_cipher = tk.Entry(self.decrypt_tab, width=50)
+        self.dec_cipher.pack()
+        tk.Label(self.decrypt_tab, text="Key (hex):").pack()
+        self.dec_key = tk.Entry(self.decrypt_tab, width=50)
+        self.dec_key.pack()
+
+        self.dec_result = tk.Label(self.decrypt_tab, text="", fg="blue")
+        self.dec_result.pack()
+
+        btn_frame = tk.Frame(self.decrypt_tab)
+        btn_frame.pack()
+        tk.Button(btn_frame, text="DES Decrypt", command=self.do_des_decrypt).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="AES Decrypt", command=self.do_aes_decrypt).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="ARC4 Decrypt", command=self.do_arc4_decrypt).pack(side=tk.LEFT, padx=2)
+
+    def build_email_tab(self):
+        tk.Label(self.email_tab, text="Sender Email:").pack()
+        self.email_sender = tk.Entry(self.email_tab, width=50)
+        self.email_sender.pack()
+        tk.Label(self.email_tab, text="Sender Email Password (App password recommended):").pack()
+        self.email_pass = tk.Entry(self.email_tab, width=50, show="*")
+        self.email_pass.pack()
+        tk.Label(self.email_tab, text="Recipient Email:").pack()
+        self.email_recipient = tk.Entry(self.email_tab, width=50)
+        self.email_recipient.pack()
+        tk.Label(self.email_tab, text="Message:").pack()
+        self.email_message = tk.Text(self.email_tab, height=5, width=50)
+        self.email_message.pack()
+
+        self.email_result = tk.Label(self.email_tab, text="", fg="blue")
+        self.email_result.pack()
+
+        tk.Button(self.email_tab, text="Send Encrypted Email", command=self.do_send_email).pack(pady=4)
+
+    # ==== Action handlers ====
+    def do_hash(self, algorithm):
+        text = self.hash_entry.get()
+        if not text:
+            self.hash_result.config(text="Please enter text.")
+            return
+        result = hash_text(algorithm, text)
+        self.hash_result.config(text=f"{algorithm.upper()} = {result}")
+
+    def do_des_encrypt(self):
+        plain = self.enc_plain.get()
+        key_hex = self.enc_key.get()
+        try:
+            key = binascii.unhexlify(key_hex)
+            if len(key) != 8:
+                raise ValueError("DES key must be 8 bytes (16 hex chars)")
+            cipher = des_encrypt(plain, key)
+            self.enc_result.config(text="DES Encrypted: " + cipher)
+        except Exception as e:
+            self.enc_result.config(text="Error: " + str(e))
+
+    def do_aes_encrypt(self):
+        plain = self.enc_plain.get()
+        key_hex = self.enc_key.get()
+        try:
+            key = binascii.unhexlify(key_hex)
+            if len(key) not in (16, 24, 32):
+                raise ValueError("AES key must be 16, 24, or 32 bytes (32/48/64 hex chars)")
+            cipher = aes_encrypt(plain, key)
+            self.enc_result.config(text="AES Encrypted: " + cipher)
+        except Exception as e:
+            self.enc_result.config(text="Error: " + str(e))
+
+    def do_arc4_encrypt(self):
+        plain = self.enc_plain.get()
+        key_hex = self.enc_key.get()
+        try:
+            key = binascii.unhexlify(key_hex)
+            cipher = arc4_encrypt(plain, key)
+            self.enc_result.config(text="ARC4 Encrypted: " + cipher)
+        except Exception as e:
+            self.enc_result.config(text="Error: " + str(e))
+
+    def do_des_decrypt(self):
+        cipher_hex = self.dec_cipher.get()
+        key_hex = self.dec_key.get()
+        try:
+            key = binascii.unhexlify(key_hex)
+            if len(key) != 8:
+                raise ValueError("DES key must be 8 bytes (16 hex chars)")
+            plain = des_decrypt(cipher_hex, key)
+            self.dec_result.config(text="DES Decrypted: " + plain)
+        except Exception as e:
+            self.dec_result.config(text="Error: " + str(e))
+
+    def do_aes_decrypt(self):
+        cipher_hex = self.dec_cipher.get()
+        key_hex = self.dec_key.get()
+        try:
+            key = binascii.unhexlify(key_hex)
+            if len(key) not in (16, 24, 32):
+                raise ValueError("AES key must be 16, 24, or 32 bytes (32/48/64 hex chars)")
+            plain = aes_decrypt(cipher_hex, key)
+            self.dec_result.config(text="AES Decrypted: " + plain)
+        except Exception as e:
+            self.dec_result.config(text="Error: " + str(e))
+
+    def do_arc4_decrypt(self):
+        cipher_hex = self.dec_cipher.get()
+        key_hex = self.dec_key.get()
+        try:
+            key = binascii.unhexlify(key_hex)
+            plain = arc4_decrypt(cipher_hex, key)
+            self.dec_result.config(text="ARC4 Decrypted: " + plain)
+        except Exception as e:
+            self.dec_result.config(text="Error: " + str(e))
+
+    def do_send_email(self):
+        s_email = self.email_sender.get()
+        s_pass = self.email_pass.get()
+        r_email = self.email_recipient.get()
+        message = self.email_message.get("1.0", tk.END).strip()
+        if not all([s_email, s_pass, r_email, message]):
+            self.email_result.config(text="Fill in all fields.")
+            return
+        success, info = send_secure_email(s_email, s_pass, r_email, message)
+        self.email_result.config(text=info)
+        if success:
+            messagebox.showinfo("Success", info)
+        else:
+            messagebox.showerror("Failed", info)
+
+# ====== Main ======
+if __name__ == "__main__":
+    root = tk.Tk()
+    try:
+        import tkinter.ttk
+    except ImportError:
+        messagebox.showerror("Tkinter Error", "ttk module not found. Please install tkinter for your Python version.")
+        exit(1)
+    app = SwissCryptoTool(root)
+    root.mainloop()
